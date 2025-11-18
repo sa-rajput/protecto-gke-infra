@@ -82,7 +82,6 @@ resource "google_container_cluster" "protecto" {
   }
 
   # --- Security: Private Cluster Configuration ---
-  # CORRECTED: Removed 'enable_public_endpoint'.
   # Terraform enables public endpoint automatically if enable_private_endpoint is false.
   private_cluster_config {
     enable_private_nodes    = true
@@ -91,7 +90,6 @@ resource "google_container_cluster" "protecto" {
   }
 
   # --- Security: Master Authorized Networks ---
-  # CORRECTED: Dynamic block must be named "cidr_blocks" (plural).
   master_authorized_networks_config {
     dynamic "cidr_blocks" {
       for_each = var.control_plane_cidrs
@@ -221,23 +219,17 @@ data "http" "tidb_crd" {
   url = "https://raw.githubusercontent.com/pingcap/tidb-operator/v1.5.2/manifests/crd.yaml"
 }
 
-# Add the Pingcap Helm repository
-resource "helm_repository" "pingcap" {
-  name = "pingcap"
-  url  = "https://charts.pingcap.org/"
-
-  depends_on = [kubernetes_manifest.tidb_crd]
-}
-
 # Install the TiDB Operator Helm chart
+# FIXED: Removed 'resource "helm_repository"' and added 'repository' URL directly here.
 resource "helm_release" "tidb_operator" {
   name       = "tidb-operator"
-  repository = helm_repository.pingcap.name
+  repository = "https://charts.pingcap.org/"
   chart      = "tidb-operator"
   namespace  = kubernetes_namespace.tidb_admin.metadata[0].name
   version    = "v1.6.0"
 
-  depends_on = [helm_repository.pingcap]
+  # Depend directly on the CRD manifest
+  depends_on = [kubernetes_manifest.tidb_crd]
 }
 
 # ------------------------------------------------------------------------------
