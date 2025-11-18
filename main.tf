@@ -104,11 +104,18 @@ resource "google_container_cluster" "protecto" {
     workload_pool = "${var.project_id}.svc.id.goog"
   }
 
+  # -----------------------------------------------------------
+  # FIX FOR FREE TRIAL QUOTA ERROR
+  # We must force the default node pool to be small and use HDD
+  # so it passes quota checks before we delete it.
+  # -----------------------------------------------------------
   node_config {
     service_account = google_service_account.gke_nodes.email
     oauth_scopes = [
       "https://www.googleapis.com/auth/cloud-platform"
     ]
+    disk_type    = "pd-standard" # Force HDD
+    disk_size_gb = 30            # Minimum size
   }
 
   # --- Features & Management ---
@@ -204,8 +211,6 @@ resource "kubernetes_namespace" "tidb_cluster" {
 }
 
 # Install the TiDB Operator Helm chart
-# Note: We do not use 'depends_on' for the chart repository to avoid issues.
-# We point directly to the URL.
 resource "helm_release" "tidb_operator" {
   name       = "tidb-operator"
   repository = "https://charts.pingcap.org/"
@@ -213,7 +218,6 @@ resource "helm_release" "tidb_operator" {
   namespace  = kubernetes_namespace.tidb_admin.metadata[0].name
   version    = "v1.6.0"
 
-  # This ensures namespaces exist and cluster is ready
   depends_on = [
     google_container_node_pool.pools
   ]
@@ -221,11 +225,9 @@ resource "helm_release" "tidb_operator" {
 
 # ------------------------------------------------------------------------------
 # DEPLOY TiDB CRDs AND CLUSTER YAML (Using kubectl)
-# We use local-exec to bypass Terraform plan-time validation of CRDs
 # ------------------------------------------------------------------------------
 
 resource "null_resource" "apply_k8s_yamls" {
-  # Re-run this if the cluster endpoint changes
   triggers = {
     cluster_endpoint = google_container_cluster.protecto.endpoint
   }
@@ -235,7 +237,7 @@ resource "null_resource" "apply_k8s_yamls" {
       # 1. Get Credentials
       gcloud container clusters get-credentials ${google_container_cluster.protecto.name} --region ${var.region} --project ${var.project_id}
 
-      # 2. Apply TiDB CRDs (Required before the Cluster YAML will work)
+      # 2. Apply TiDB CRDs
       echo "Applying TiDB CRDs..."
       kubectl create -f https://raw.githubusercontent.com/pingcap/tidb-operator/v1.5.2/manifests/crd.yaml || echo "CRDs might already exist"
 
@@ -244,13 +246,11 @@ resource "null_resource" "apply_k8s_yamls" {
       sleep 10
 
       # 4. Apply the TiDB Cluster YAML
-      # We reference the file from the local directory structure
       echo "Applying TiDB Cluster YAML..."
       kubectl apply -f ${path.module}/tidb-yamls/tidb-cluster.yaml -n tidb-cluster
     EOT
   }
 
-  # Ensure this runs AFTER the operator is installed
   depends_on = [
     helm_release.tidb_operator
   ]
