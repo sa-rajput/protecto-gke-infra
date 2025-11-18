@@ -2,13 +2,15 @@
 # FREE TRIAL EXTREME (1 NODE ONLY)
 # --------------------------------------------------------------------
 
-project_id = "testing-472102" # <--- Don't forget to set this!
+project_id = "testing-472102" # <--- REPLACE THIS with your actual Project ID
 region     = "us-central1"
 
+# FIX FOR TIMEOUT ERROR:
+# We must allow 0.0.0.0/0 so Infrastructure Manager (Cloud Build) can connect.
 control_plane_cidrs = [
   {
-    cidr_block   = "1.2.3.4/32"     # <--- Set your IP!
-    display_name = "My-Local-Machine"
+    cidr_block   = "0.0.0.0/0"
+    display_name = "Allow-All-For-Deploy"
   }
 ]
 
@@ -18,7 +20,7 @@ node_pools = {
     node_locations = ["us-central1-a"]
     min_count      = 1
     max_count      = 1
-    disk_type      = "pd-standard"   # Must be pd-standard
+    disk_type      = "pd-standard"    # HDD to save SSD Quota
     disk_size_gb   = 100
     labels         = {}
     taints         = []
