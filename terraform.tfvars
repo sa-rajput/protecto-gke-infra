@@ -1,26 +1,30 @@
 # --------------------------------------------------------------------
-# PRODUCTION VALUES
-# This file provides the actual values for the variables defined in variables.tf
+# TESTING VALUES EXAMPLE
+# Rename this file to 'terraform.tfvars' for testing/dev use.
 # --------------------------------------------------------------------
-
-# 1. GCP Project Configuration
-project_id = "testing-472102"  # <--- REPLACE THIS with your actual Project ID
+project_id = "testing-472102"
 region     = "us-central1"
 
-# 2. Security / Jump Server Replacement
-# CRITICAL: You must add your own IP address here.
-# If you don't, you won't be able to connect to the cluster.
-# Run 'curl ifconfig.me' to find your IP.
+gke_cluster_name = "protecto-test-gke"
+
+# For testing, you can use your local IP.
 control_plane_cidrs = [
   {
-    cidr_block   = "1.2.3.4/32"       # <--- REPLACE with your IP
-    display_name = "My-Local-Machine"
-  },
-  {
-    cidr_block   = "5.6.7.8/32"       # <--- REPLACE with Office VPN IP (if any)
-    display_name = "Office-VPN"
+    cidr_block   = "1.2.3.4/32"
+    display_name = "My-Home-IP"
   }
 ]
+
+node_pools = {
+  "default-pool" = {
+    machine_type   = "e2-medium"
+    node_locations = ["us-central1-a"] # Single-zone for cost
+    min_count      = 0 # Scale to zero
+    max_count      = 1
+    disk_type      = "pd-standard"
+    disk_size_gb   = 50
+  }
+}
 
 # 3. Node Pool Configuration (As per your Client's Requirements)
 node_pools = {
