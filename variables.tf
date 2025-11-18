@@ -56,10 +56,7 @@ variable "control_plane_cidrs" {
     cidr_block   = string
     display_name = string
   }))
-  validation {
-    condition     = alltrue([for block in var.control_plane_cidrs : block.cidr_block != "0.0.0.0/0"])
-    error_message = "Do not use '0.0.0.0/0' for production. Please restrict this to your specific IP addresses."
-  }
+  # Validation block removed to allow 0.0.0.0/0 for Free Trial / Infra Manager usage
 }
 
 variable "gke_node_service_account_name" {
