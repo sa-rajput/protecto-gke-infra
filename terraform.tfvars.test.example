@@ -1,0 +1,28 @@
+# --------------------------------------------------------------------
+# TESTING VALUES EXAMPLE
+# Rename this file to 'terraform.tfvars' for testing/dev use.
+# --------------------------------------------------------------------
+
+project_id = "testing-472102"
+region     = "us-central1"
+
+gke_cluster_name = "protecto-test-gke"
+
+# For testing, you can use your local IP.
+control_plane_cidrs = [
+  {
+    cidr_block   = "1.2.3.4/32"
+    display_name = "My-Home-IP"
+  }
+]
+
+node_pools = {
+  "default-pool" = {
+    machine_type   = "e2-medium"
+    node_locations = ["us-central1-a"] # Single-zone for cost
+    min_count      = 0 # Scale to zero
+    max_count      = 1
+    disk_type      = "pd-standard"
+    disk_size_gb   = 50
+  }
+}
