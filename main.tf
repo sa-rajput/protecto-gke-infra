@@ -104,21 +104,16 @@ resource "google_container_cluster" "protecto" {
     workload_pool = "${var.project_id}.svc.id.goog"
   }
 
-  # -----------------------------------------------------------
-  # FIX FOR FREE TRIAL QUOTA ERROR
-  # We must force the default node pool to be small and use HDD
-  # so it passes quota checks before we delete it.
-  # -----------------------------------------------------------
+  # Fix for Free Trial Quota: Force small HDD default pool
   node_config {
     service_account = google_service_account.gke_nodes.email
     oauth_scopes = [
       "https://www.googleapis.com/auth/cloud-platform"
     ]
-    disk_type    = "pd-standard" # Force HDD
-    disk_size_gb = 30            # Minimum size
+    disk_type    = "pd-standard"
+    disk_size_gb = 30
   }
 
-  # --- Features & Management ---
   remove_default_node_pool = true
   initial_node_count       = 1
 
@@ -141,9 +136,7 @@ resource "google_container_node_pool" "pools" {
   name     = each.key
   location = var.region
   cluster  = google_container_cluster.protecto.id
-
   node_locations = each.value.node_locations
-
   initial_node_count = each.value.min_count
 
   autoscaling {
@@ -194,19 +187,14 @@ resource "google_container_node_pool" "pools" {
 # AUTOMATION OF CLIENT DEPLOYMENT - STEP 2 (TiDB Operator & Cluster)
 # ------------------------------------------------------------------------------
 
-# Create the TiDB Admin Namespace
+# Create the TiDB Namespaces
 resource "kubernetes_namespace" "tidb_admin" {
-  metadata {
-    name = "tidb-admin"
-  }
+  metadata { name = "tidb-admin" }
   depends_on = [google_container_cluster.protecto]
 }
 
-# Create the TiDB Cluster Namespace
 resource "kubernetes_namespace" "tidb_cluster" {
-  metadata {
-    name = "tidb-cluster"
-  }
+  metadata { name = "tidb-cluster" }
   depends_on = [google_container_cluster.protecto]
 }
 
@@ -217,14 +205,11 @@ resource "helm_release" "tidb_operator" {
   chart      = "tidb-operator"
   namespace  = kubernetes_namespace.tidb_admin.metadata[0].name
   version    = "v1.6.0"
-
-  depends_on = [
-    google_container_node_pool.pools
-  ]
+  depends_on = [google_container_node_pool.pools]
 }
 
 # ------------------------------------------------------------------------------
-# DEPLOY TiDB CRDs AND CLUSTER YAML (Using kubectl)
+# DEPLOY TiDB CRDs AND CLUSTER YAML (Self-contained, No gcloud needed)
 # ------------------------------------------------------------------------------
 
 resource "null_resource" "apply_k8s_yamls" {
@@ -233,21 +218,44 @@ resource "null_resource" "apply_k8s_yamls" {
   }
 
   provisioner "local-exec" {
+    # We pass Terraform variables into the shell command to avoid "gcloud not found"
     command = <<EOT
-      # 1. Get Credentials
-      gcloud container clusters get-credentials ${google_container_cluster.protecto.name} --region ${var.region} --project ${var.project_id}
+      set -e
+      echo "--- Setting up kubectl environment ---"
+      
+      # 1. Download kubectl (Since it's missing in the runner image)
+      curl -LO "https://dl.k8s.io/release/v1.29.0/bin/linux/amd64/kubectl"
+      chmod +x ./kubectl
 
-      # 2. Apply TiDB CRDs
-      echo "Applying TiDB CRDs..."
-      kubectl create -f https://raw.githubusercontent.com/pingcap/tidb-operator/v1.5.2/manifests/crd.yaml || echo "CRDs might already exist"
+      # 2. Create Auth Config manually (No gcloud needed)
+      echo "${base64decode(google_container_cluster.protecto.master_auth[0].cluster_ca_certificate)}" > ca.crt
+      
+      ./kubectl config set-cluster gke-cluster \
+        --server=https://${google_container_cluster.protecto.endpoint} \
+        --certificate-authority=ca.crt \
+        --embed-certs=true
 
-      # 3. Wait for CRDs to be established
-      echo "Waiting for CRDs..."
-      sleep 10
+      ./kubectl config set-credentials deployer \
+        --token="${data.google_client_config.default.access_token}"
+
+      ./kubectl config set-context gke-deploy \
+        --cluster=gke-cluster \
+        --user=deployer
+
+      ./kubectl config use-context gke-deploy
+
+      # 3. Apply TiDB CRDs
+      echo "--- Applying TiDB CRDs ---"
+      ./kubectl create -f https://raw.githubusercontent.com/pingcap/tidb-operator/v1.5.2/manifests/crd.yaml || echo "CRDs might already exist"
+
+      echo "Waiting for CRDs to establish..."
+      sleep 15
 
       # 4. Apply the TiDB Cluster YAML
-      echo "Applying TiDB Cluster YAML..."
-      kubectl apply -f ${path.module}/tidb-yamls/tidb-cluster.yaml -n tidb-cluster
+      echo "--- Applying TiDB Cluster YAML ---"
+      ./kubectl apply -f ${path.module}/tidb-yamls/tidb-cluster.yaml -n tidb-cluster
+      
+      echo "--- Deployment Submitted Successfully ---"
     EOT
   }
 
