@@ -27,32 +27,29 @@ provider "google" {
   region  = var.region
 }
 
-# 2. Get cluster data to configure the Kubernetes & Helm providers
+# 2. Client config for auth token
 data "google_client_config" "default" {}
 
-data "google_container_cluster" "protecto_data" {
-  project  = var.project_id
-  name     = google_container_cluster.protecto.name
-  location = var.region
-  depends_on = [
-    google_container_cluster.protecto
-  ]
-}
+# REMOVED: data "google_container_cluster" "protecto_data"
+# We must not use a data source for a cluster we are creating in the same apply.
+# Instead, we reference the resource directly below.
 
-# 3. Configure the Helm provider (CORRECTED)
-# Helm requires connection details to be nested in a 'kubernetes' block.
+# 3. Configure the Helm provider
 provider "helm" {
   kubernetes {
-    host                   = "https://${data.google_container_cluster.protecto_data.endpoint}"
+    # Use the resource attributes directly.
+    # This ensures Terraform waits for the cluster to be created.
+    host                   = "https://${google_container_cluster.protecto.endpoint}"
     token                  = data.google_client_config.default.access_token
-    cluster_ca_certificate = base64decode(data.google_container_cluster.protecto_data.master_auth[0].cluster_ca_certificate)
+    cluster_ca_certificate = base64decode(google_container_cluster.protecto.master_auth[0].cluster_ca_certificate)
   }
 }
 
-# 4. Configure the Kubernetes provider (CORRECTED)
-# Kubernetes provider uses top-level arguments.
+# 4. Configure the Kubernetes provider
 provider "kubernetes" {
-  host                   = "https://${data.google_container_cluster.protecto_data.endpoint}"
+  # Use the resource attributes directly.
+  # This ensures Terraform waits for the cluster to be created.
+  host                   = "https://${google_container_cluster.protecto.endpoint}"
   token                  = data.google_client_config.default.access_token
-  cluster_ca_certificate = base64decode(data.google_container_cluster.protecto_data.master_auth[0].cluster_ca_certificate)
+  cluster_ca_certificate = base64decode(google_container_cluster.protecto.master_auth[0].cluster_ca_certificate)
 }
