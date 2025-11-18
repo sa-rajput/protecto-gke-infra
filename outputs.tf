@@ -1,4 +1,18 @@
-[Immersive content redacted for brevity.]
+output "cluster_name" {
+  description = "GKE cluster name"
+  value       = google_container_cluster.protecto.name
+}
+
+output "cluster_endpoint" {
+  description = "GKE endpoint (public API server)"
+  value       = google_container_cluster.protecto.endpoint
+}
+
+output "gke_node_service_account" {
+  description = "Email of the dedicated service account for GKE nodes."
+  value       = google_service_account.gke_nodes.email
+}
+
 output "kubeconfig_command_hint" {
   description = "Command to get kubeconfig credentials for this cluster."
   value = "gcloud container clusters get-credentials ${google_container_cluster.protecto.name} --region ${var.region} --project ${var.project_id}"
