@@ -192,6 +192,7 @@ resource "kubernetes_namespace" "tidb_admin" {
   metadata {
     name = "tidb-admin"
   }
+  depends_on = [google_container_cluster.protecto]
 }
 
 # Create the TiDB Cluster Namespace
@@ -199,45 +200,12 @@ resource "kubernetes_namespace" "tidb_cluster" {
   metadata {
     name = "tidb-cluster"
   }
-}
-
-# HTTP data source to fetch the CRD YAML
-data "http" "tidb_crd" {
-  url = "https://raw.githubusercontent.com/pingcap/tidb-operator/v1.5.2/manifests/crd.yaml"
-}
-
-# Locals block to split multi-document YAMLs and FILTER OUT 'status'
-locals {
-  # 1. Split the CRD URL content by "---" and remove "status" field
-  tidb_crd_docs = [
-    for doc in split("---", data.http.tidb_crd.response_body) : 
-    { for k, v in yamldecode(doc) : k => v if k != "status" }
-    if length(trimspace(doc)) > 0
-  ]
-
-  # 2. Split the local TiDB Cluster YAML content by "---" and remove "status" field
-  tidb_cluster_file_content = file("${path.module}/tidb-yamls/tidb-cluster.yaml")
-  tidb_cluster_docs = [
-    for doc in split("---", local.tidb_cluster_file_content) :
-    { for k, v in yamldecode(doc) : k => v if k != "status" }
-    if length(trimspace(doc)) > 0
-  ]
-}
-
-# Apply the TiDB CRD (Iterating over split documents)
-resource "kubernetes_manifest" "tidb_crd" {
-  # We create a resource for each document found in the YAML
-  for_each = { for idx, doc in local.tidb_crd_docs : idx => doc }
-  
-  manifest = each.value
-
-  depends_on = [
-    kubernetes_namespace.tidb_admin,
-    kubernetes_namespace.tidb_cluster
-  ]
+  depends_on = [google_container_cluster.protecto]
 }
 
 # Install the TiDB Operator Helm chart
+# Note: We do not use 'depends_on' for the chart repository to avoid issues.
+# We point directly to the URL.
 resource "helm_release" "tidb_operator" {
   name       = "tidb-operator"
   repository = "https://charts.pingcap.org/"
@@ -245,19 +213,44 @@ resource "helm_release" "tidb_operator" {
   namespace  = kubernetes_namespace.tidb_admin.metadata[0].name
   version    = "v1.6.0"
 
-  # Wait for all CRDs to be applied
-  depends_on = [kubernetes_manifest.tidb_crd]
+  # This ensures namespaces exist and cluster is ready
+  depends_on = [
+    google_container_node_pool.pools
+  ]
 }
 
 # ------------------------------------------------------------------------------
-# Deploy the TiDB Cluster (Iterating over split documents)
+# DEPLOY TiDB CRDs AND CLUSTER YAML (Using kubectl)
+# We use local-exec to bypass Terraform plan-time validation of CRDs
 # ------------------------------------------------------------------------------
-resource "kubernetes_manifest" "tidb_cluster" {
-  # We create a resource for each document found in the client's YAML
-  for_each = { for idx, doc in local.tidb_cluster_docs : idx => doc }
 
-  manifest = each.value
+resource "null_resource" "apply_k8s_yamls" {
+  # Re-run this if the cluster endpoint changes
+  triggers = {
+    cluster_endpoint = google_container_cluster.protecto.endpoint
+  }
 
+  provisioner "local-exec" {
+    command = <<EOT
+      # 1. Get Credentials
+      gcloud container clusters get-credentials ${google_container_cluster.protecto.name} --region ${var.region} --project ${var.project_id}
+
+      # 2. Apply TiDB CRDs (Required before the Cluster YAML will work)
+      echo "Applying TiDB CRDs..."
+      kubectl create -f https://raw.githubusercontent.com/pingcap/tidb-operator/v1.5.2/manifests/crd.yaml || echo "CRDs might already exist"
+
+      # 3. Wait for CRDs to be established
+      echo "Waiting for CRDs..."
+      sleep 10
+
+      # 4. Apply the TiDB Cluster YAML
+      # We reference the file from the local directory structure
+      echo "Applying TiDB Cluster YAML..."
+      kubectl apply -f ${path.module}/tidb-yamls/tidb-cluster.yaml -n tidb-cluster
+    EOT
+  }
+
+  # Ensure this runs AFTER the operator is installed
   depends_on = [
     helm_release.tidb_operator
   ]
