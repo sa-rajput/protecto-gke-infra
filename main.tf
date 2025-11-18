@@ -206,20 +206,20 @@ data "http" "tidb_crd" {
   url = "https://raw.githubusercontent.com/pingcap/tidb-operator/v1.5.2/manifests/crd.yaml"
 }
 
-# Locals block to split multi-document YAMLs
+# Locals block to split multi-document YAMLs and FILTER OUT 'status'
 locals {
-  # 1. Split the CRD URL content by "---" to handle multiple documents
+  # 1. Split the CRD URL content by "---" and remove "status" field
   tidb_crd_docs = [
     for doc in split("---", data.http.tidb_crd.response_body) : 
-    yamldecode(doc) 
+    { for k, v in yamldecode(doc) : k => v if k != "status" }
     if length(trimspace(doc)) > 0
   ]
 
-  # 2. Split the local TiDB Cluster YAML content by "---" (just in case)
+  # 2. Split the local TiDB Cluster YAML content by "---" and remove "status" field
   tidb_cluster_file_content = file("${path.module}/tidb-yamls/tidb-cluster.yaml")
   tidb_cluster_docs = [
     for doc in split("---", local.tidb_cluster_file_content) :
-    yamldecode(doc)
+    { for k, v in yamldecode(doc) : k => v if k != "status" }
     if length(trimspace(doc)) > 0
   ]
 }
