@@ -30,25 +30,19 @@ provider "google" {
 # 2. Client config for auth token
 data "google_client_config" "default" {}
 
-# REMOVED: data "google_container_cluster" "protecto_data"
-# We must not use a data source for a cluster we are creating in the same apply.
-# Instead, we reference the resource directly below.
-
 # 3. Configure the Helm provider
+# This uses the cluster endpoint directly to ensure dependency
 provider "helm" {
   kubernetes {
-    # Use the resource attributes directly.
-    # This ensures Terraform waits for the cluster to be created.
     host                   = "https://${google_container_cluster.protecto.endpoint}"
     token                  = data.google_client_config.default.access_token
     cluster_ca_certificate = base64decode(google_container_cluster.protecto.master_auth[0].cluster_ca_certificate)
   }
 }
 
-# 4. Configure the Kubernetes provider
+# 4. Kubernetes Provider
+# We define this to allow 'kubernetes_namespace' resources to work.
 provider "kubernetes" {
-  # Use the resource attributes directly.
-  # This ensures Terraform waits for the cluster to be created.
   host                   = "https://${google_container_cluster.protecto.endpoint}"
   token                  = data.google_client_config.default.access_token
   cluster_ca_certificate = base64decode(google_container_cluster.protecto.master_auth[0].cluster_ca_certificate)
