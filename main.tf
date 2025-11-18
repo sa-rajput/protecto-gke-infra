@@ -82,7 +82,6 @@ resource "google_container_cluster" "protecto" {
   }
 
   # --- Security: Private Cluster Configuration ---
-  # Terraform enables public endpoint automatically if enable_private_endpoint is false.
   private_cluster_config {
     enable_private_nodes    = true
     enable_private_endpoint = false
@@ -151,7 +150,6 @@ resource "google_container_node_pool" "pools" {
     disk_size_gb = each.value.disk_size_gb
     labels       = each.value.labels
 
-    # Dynamic block for taints
     dynamic "taint" {
       for_each = each.value.taints
       content {
@@ -166,7 +164,6 @@ resource "google_container_node_pool" "pools" {
       "https://www.googleapis.com/auth/cloud-platform"
     ]
 
-    # Dynamic GPU Configuration
     dynamic "guest_accelerator" {
       for_each = (each.value.gpu_type != null && each.value.gpu_count > 0) ? [1] : []
       content {
@@ -204,9 +201,35 @@ resource "kubernetes_namespace" "tidb_cluster" {
   }
 }
 
-# Apply the TiDB CRD
+# HTTP data source to fetch the CRD YAML
+data "http" "tidb_crd" {
+  url = "https://raw.githubusercontent.com/pingcap/tidb-operator/v1.5.2/manifests/crd.yaml"
+}
+
+# Locals block to split multi-document YAMLs
+locals {
+  # 1. Split the CRD URL content by "---" to handle multiple documents
+  tidb_crd_docs = [
+    for doc in split("---", data.http.tidb_crd.response_body) : 
+    yamldecode(doc) 
+    if length(trimspace(doc)) > 0
+  ]
+
+  # 2. Split the local TiDB Cluster YAML content by "---" (just in case)
+  tidb_cluster_file_content = file("${path.module}/tidb-yamls/tidb-cluster.yaml")
+  tidb_cluster_docs = [
+    for doc in split("---", local.tidb_cluster_file_content) :
+    yamldecode(doc)
+    if length(trimspace(doc)) > 0
+  ]
+}
+
+# Apply the TiDB CRD (Iterating over split documents)
 resource "kubernetes_manifest" "tidb_crd" {
-  manifest = yamldecode(data.http.tidb_crd.response_body)
+  # We create a resource for each document found in the YAML
+  for_each = { for idx, doc in local.tidb_crd_docs : idx => doc }
+  
+  manifest = each.value
 
   depends_on = [
     kubernetes_namespace.tidb_admin,
@@ -214,13 +237,7 @@ resource "kubernetes_manifest" "tidb_crd" {
   ]
 }
 
-# HTTP data source to fetch the CRD YAML
-data "http" "tidb_crd" {
-  url = "https://raw.githubusercontent.com/pingcap/tidb-operator/v1.5.2/manifests/crd.yaml"
-}
-
 # Install the TiDB Operator Helm chart
-# FIXED: Removed 'resource "helm_repository"' and added 'repository' URL directly here.
 resource "helm_release" "tidb_operator" {
   name       = "tidb-operator"
   repository = "https://charts.pingcap.org/"
@@ -228,15 +245,18 @@ resource "helm_release" "tidb_operator" {
   namespace  = kubernetes_namespace.tidb_admin.metadata[0].name
   version    = "v1.6.0"
 
-  # Depend directly on the CRD manifest
+  # Wait for all CRDs to be applied
   depends_on = [kubernetes_manifest.tidb_crd]
 }
 
 # ------------------------------------------------------------------------------
-# Deploy the TiDB Cluster
+# Deploy the TiDB Cluster (Iterating over split documents)
 # ------------------------------------------------------------------------------
 resource "kubernetes_manifest" "tidb_cluster" {
-  manifest = yamldecode(file("${path.module}/tidb-yamls/tidb-cluster.yaml"))
+  # We create a resource for each document found in the client's YAML
+  for_each = { for idx, doc in local.tidb_cluster_docs : idx => doc }
+
+  manifest = each.value
 
   depends_on = [
     helm_release.tidb_operator
